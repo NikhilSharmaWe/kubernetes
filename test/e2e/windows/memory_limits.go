@@ -104,32 +104,38 @@ func overrideAllocatableMemoryTest(f *framework.Framework, allocatablePods int) 
 	const (
 		podType = "memory_limit_test_pod"
 	)
+	//
+	selector := labels.Set{"kubernetes.io/os": "windows"}.AsSelector()
+	nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+		LabelSelector: selector.String(),
+	})
+	framework.ExpectNoError(err)
+	totalAllocatable := resource.NewQuantity(0, resource.BinarySI)
+	for _, node := range nodeList.Items {
+		status := node.Status
+		totalAllocatable.Add(status.Allocatable[v1.ResourceMemory])
+		nodeAllocatable := totalAllocatable
 
-	totalAllocatable := getTotalAllocatableMemory(f)
+		pods := newMemLimitTestPods(1, imageutils.GetPauseImageName(), podType, strconv.FormatInt(nodeAllocatable, 1))
+		f.PodClient().CreateBatch(pods[0])
 
-	memValue := totalAllocatable.Value()
-	memPerPod := memValue / int64(allocatablePods)
-	ginkgo.By(fmt.Sprintf("Deploying %d pods with mem limit %v, then one additional pod", allocatablePods, memPerPod))
+		failurePods := newMemLimitTestPods(1, imageutils.GetPauseImageName(), podType, strconv.FormatInt(nodeAllocatable, 1))
+		f.PodClient().CreateBatch(failurePods[0])
 
-	// these should all work
-	pods := newMemLimitTestPods(allocatablePods, imageutils.GetPauseImageName(), podType, strconv.FormatInt(memPerPod, 10))
-	f.PodClient().CreateBatch(pods)
-
-	failurePods := newMemLimitTestPods(1, imageutils.GetPauseImageName(), podType, strconv.FormatInt(memPerPod, 10))
-	f.PodClient().Create(failurePods[0])
-
-	gomega.Eventually(func() bool {
-		eventList, err := f.ClientSet.CoreV1().Events(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{})
-		framework.ExpectNoError(err)
-		for _, e := range eventList.Items {
-			// Look for an event that shows FailedScheduling
-			if e.Type == "Warning" && e.Reason == "FailedScheduling" && e.InvolvedObject.Name == failurePods[0].ObjectMeta.Name {
-				framework.Logf("Found %+v event with message %+v", e.Reason, e.Message)
-				return true
+		gomega.Eventually(func() bool {
+			eventList, err := f.ClientSet.CoreV1().Events(f.Namespace.Name).List(context.TODO(), metav1.ListOptions{})
+			framework.ExpectNoError(err)
+			for _, e := range eventList.Items {
+				// Look for an event that shows FailedScheduling
+				if e.Type == "Warning" && e.Reason == "FailedScheduling" && e.InvolvedObject.Name == failurePods[0].ObjectMeta.Name {
+					framework.Logf("Found %+v event with message %+v", e.Reason, e.Message)
+					return true
+				}
 			}
-		}
-		return false
-	}, 3*time.Minute, 10*time.Second).Should(gomega.Equal(true))
+			return false
+		}, 3*time.Minute, 10*time.Second).Should(gomega.Equal(true))
+	}
+
 }
 
 // newMemLimitTestPods creates a list of pods (specification) for test.

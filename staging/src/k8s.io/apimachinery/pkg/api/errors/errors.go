@@ -811,6 +811,18 @@ func reasonAndCodeForError(err error) (metav1.StatusReason, int32) {
 	return metav1.StatusReasonUnknown, 0
 }
 
+func CauseForError(err error) []metav1.StatusCause {
+	status := APIStatus(nil)
+	if !errors.As(err, &status) {
+		return nil
+	}
+	details := status.Status().Details
+	if details == nil {
+		return nil
+	}
+	return details.Causes
+}
+
 // ErrorReporter converts generic errors into runtime.Object errors without
 // requiring the caller to take a dependency on meta/v1 (where Status lives).
 // This prevents circular dependencies in core watch code.
